@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pro Glide Online Chess</title>
+    <style>
+        body { background: #1a1a1a; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        #status { margin-bottom: 10px; font-size: 20px; color: #00ffcc; font-weight: bold; }
+        #game-container { position: relative; width: 480px; height: 480px; border: 5px solid #444; }
+        #board-grid { display: grid; grid-template-columns: repeat(8, 60px); grid-template-rows: repeat(8, 60px); }
+        .sq { width: 60px; height: 60px; }
+        .light { background-color: #eeeed2; }
+        .dark { background-color: #769656; }
+        .selected { background-color: rgba(255, 255, 0, 0.5) !important; }
+        .last-move { background-color: rgba(255, 255, 255, 0.3) !important; }
+        .piece { position: absolute; width: 60px; height: 60px; background-size: 50px; background-repeat: no-repeat; background-position: center; pointer-events: none; transition: all 0.3s ease; z-index: 10; }
+        #chat-wrapper { width: 480px; margin-top: 15px; background: #222; border: 2px solid #444; border-radius: 5px; }
+        #chat-box { height: 100px; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 5px; font-size: 14px; }
+        #chat-input-area { display: flex; border-top: 1px solid #444; }
+        #chat-input { flex-grow: 1; padding: 10px; border: none; background: #333; color: white; outline: none; }
+        #chat-send { background: #00ffcc; border: none; padding: 10px; cursor: pointer; font-weight: bold; }
+        .msg { padding: 4px 8px; border-radius: 4px; width: fit-content; }
+        .msg-white { background: #eee; color: #000; align-self: flex-start; }
+        .msg-black { background: #444; color: #fff; align-self: flex-end; }
+    </style>
+</head>
+<body>
+    <div id="status">CONNECTING...</div>
+    <div id="game-container">
+        <div id="board-grid"></div>
+        <div id="pieces-layer"></div>
+    </div>
+    <div id="chat-wrapper">
+        <div id="chat-box"></div>
+        <div id="chat-input-area">
+            <input type="text" id="chat-input" placeholder="Say something..." autocomplete="off">
+            <button id="chat-send">SEND</button>
+        </div>
+    </div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    const socket = io();
+    const statusEl = document.getElementById('status');
+    const piecesLayer = document.getElementById('pieces-layer');
+    const chatBox = document.getElementById('chat-box');
+    const chatInput = document.getElementById('chat-input');
+    
+    let playerRole = null; 
+    let turn = 'white';
+    let board = [['r','n','b','q','k','b','n','r'],['p','p','p','p','p','p','p','p'],['','','','','','','',''],['','','','','','','',''],['','','','','','','',''],['','','','','','','',''],['P','P','P','P','P','P','P','P'],['R','N','B','Q','K','B','N','R']];
+    let visualBoard = Array(8).fill().map(() => Array(8).fill(null));
+    let selected = null;
+    let lastMove = null;
+
+    const imgs = {
+        'p': 'https://upload.wikimedia.org/wikipedia/commons/c/c7/Chess_pdt45.svg', 'r': 'https://upload.wikimedia.org/wikipedia/commons/f/ff/Chess_rdt45.svg',
+        'n': 'https://upload.wikimedia.org/wikipedia/commons/e/ef/Chess_ndt45.svg', 'b': 'https://upload.wikimedia.org/wikipedia/commons/9/98/Chess_bdt45.svg',
+        'q': 'https://upload.wikimedia.org/wikipedia/commons/4/47/Chess_qdt45.svg', 'k': 'https://upload.wikimedia.org/wikipedia/commons/f/f0/Chess_kdt45.svg',
+        'P': 'https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg', 'R': 'https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg',
+        'N': 'https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg', 'B': 'https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg',
+        'Q': 'https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg', 'K': 'https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg'
+    };
+
+    function adj(r, c) { return playerRole === 'black' ? { r: 7 - r, c: 7 - c } : { r, c }; }
+
+    socket.on('playerRole', (role) => {
+        playerRole = role;
+        statusEl.innerText = role ? `YOU ARE ${role.toUpperCase()}` : "SPECTATING";
+        initGame();
+    });
+
+    socket.on('move', (m) => {
+        console.log("Receiving move from opponent:", m);
+        executeMove(m.fr, m.fc, m.tr, m.tc);
+        turn = playerRole;
+        statusEl.innerText = "YOUR TURN";
+    });
+
+    socket.on('chatMessage', (data) => addMessage(data.role, data.text));
+
+    function initGame() {
+        document.getElementById('board-grid').innerHTML = ''; piecesLayer.innerHTML = '';
+        for(let r=0; r<8; r++) {
+            for(let c=0; c<8; c++) {
+                let coords = adj(r, c);
+                const sq = document.createElement('div');
+                sq.className = `sq ${(r+c)%2 ? 'dark' : 'light'}`;
+                sq.id = `sq-${coords.r}-${coords.c}`;
+                sq.onclick = () => handleInput(coords.r, coords.c);
+                document.getElementById('board-grid').appendChild(sq);
+                if(board[coords.r][coords.c]) createVisualPiece(coords.r, coords.c, board[coords.r][coords.c]);
+            }
+        }
+    }
+
+    function createVisualPiece(r, c, type) {
+        const div = document.createElement('div');
+        div.className = 'piece';
+        div.style.backgroundImage = `url(${imgs[type]})`;
+        visualBoard[r][c] = div;
+        updatePiecePos(r, c);
+        piecesLayer.appendChild(div);
+    }
+
+    function updatePiecePos(r, c) {
+        let div = visualBoard[r][c];
+        if (!div) return;
+        let display = adj(r, c);
+        div.style.top = (display.r * 60) + "px";
+        div.style.left = (display.c * 60) + "px";
+    }
+
+    function executeMove(fr, fc, tr, tc) {
+        if(visualBoard[tr][tc]) {
+            let cap = visualBoard[tr][tc];
+            cap.style.opacity = '0';
+            setTimeout(() => cap.remove(), 300);
+        }
+        visualBoard[tr][tc] = visualBoard[fr][fc];
+        visualBoard[fr][fc] = null;
+        board[tr][tc] = board[fr][fc];
+        board[fr][fc] = '';
+        lastMove = {fr, fc, tr, tc};
+        syncVisuals();
+    }
+
+    function syncVisuals() {
+        document.querySelectorAll('.sq').forEach(s => s.classList.remove('selected', 'last-move'));
+        if(selected) document.getElementById(`sq-${selected.r}-${selected.c}`).classList.add('selected');
+        if(lastMove) {
+            document.getElementById(`sq-${lastMove.fr}-${lastMove.fc}`).classList.add('last-move');
+            document.getElementById(`sq-${lastMove.tr}-${lastMove.tc}`).classList.add('last-move');
+        }
+        for(let r=0; r<8; r++) for(let c=0; c<8; c++) if(visualBoard[r][c]) updatePiecePos(r, c);
+    }
+
+    function handleInput(r, c) {
+        if(turn !== playerRole) return;
+        if(selected) {
+            // Simplified logic: move if empty or opponent piece
+            let piece = board[selected.r][selected.c];
+            socket.emit('move', {fr: selected.r, fc: selected.c, tr: r, tc: c});
+            executeMove(selected.r, selected.c, r, c);
+            turn = (playerRole === 'white' ? 'black' : 'white');
+            statusEl.innerText = "WAITING...";
+            selected = null;
+        } else {
+            let p = board[r][c];
+            if (p && ((playerRole==='white' && p===p.toUpperCase()) || (playerRole==='black' && p===p.toLowerCase()))) {
+                selected = {r, c}; syncVisuals();
+            }
+        }
+    }
+
+    // Chat Box logic
+    function addMessage(role, text) {
+        const div = document.createElement('div');
+        div.className = `msg msg-${role}`;
+        div.innerText = text;
+        chatBox.appendChild(div);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+    document.getElementById('chat-send').onclick = () => {
+        const text = chatInput.value;
+        if(text && playerRole) {
+            addMessage(playerRole, text);
+            socket.emit('chatMessage', { role: playerRole, text: text });
+            chatInput.value = '';
+        }
+    };
+</script>
+</body>
+</html>
