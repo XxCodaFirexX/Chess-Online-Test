@@ -1,17 +1,19 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+// Serve your HTML file
 app.use(express.static(__dirname));
 
 let players = { white: null, black: null };
 
 io.on('connection', (socket) => {
-    console.log('New Connection:', socket.id);
+    console.log('User connected:', socket.id);
 
     let role = null;
     if (!players.white) {
@@ -23,15 +25,11 @@ io.on('connection', (socket) => {
     }
 
     socket.emit('playerRole', role);
-    console.log(`Assigned ${role} to ${socket.id}`);
 
-    // The move relay
     socket.on('move', (moveData) => {
-        console.log('Relaying move:', moveData);
         socket.broadcast.emit('move', moveData);
     });
 
-    // The chat relay
     socket.on('chatMessage', (msg) => {
         socket.broadcast.emit('chatMessage', msg);
     });
@@ -43,4 +41,8 @@ io.on('connection', (socket) => {
     });
 });
 
-server.listen(3000, () => console.log('Chess Server: http://localhost:3000'));
+// IMPORTANT: Render uses process.env.PORT
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
